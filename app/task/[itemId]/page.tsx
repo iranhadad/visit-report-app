@@ -60,8 +60,10 @@ export default function TaskPage() {
   }
 
   function goToSummary() {
-    if (!task.projectId || !task.technicianId) return;
+    if (!task) return;
 
+    if (!task.projectId || !task.technicianId) return;
+    
     router.push(
       `/task/${task.itemId}/summary?projectId=${task.projectId}&technicianId=${task.technicianId}&date=${today}`
     );
