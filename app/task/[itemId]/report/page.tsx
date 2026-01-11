@@ -1,24 +1,21 @@
 "use client";
 
-import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useWork } from "@/app/context/WorkContext";
 
 const MAKE_WEBHOOK_URL =
   "https://hook.eu2.make.com/jylbsnfkjwvonynpl20mmmfel2ziljqp";
 
+const PROJECT_ID_STORAGE_KEY = "last-project-id";
+
 export default function ReportPage() {
-  const params = useParams();
-  const searchParams = useSearchParams();
   const router = useRouter();
+  const { work } = useWork();
 
-  const itemId = params.itemId as string;
-
-  const projectId = searchParams.get("projectId");
-  const technicianId = searchParams.get("technicianId");
-  const projectName = searchParams.get("projectName");
-  const itemName = searchParams.get("itemName");
-
-  // שדות טופס
+  /* -------------------------------------------------
+     ✅ Hooks תמיד למעלה
+  -------------------------------------------------- */
   const [date, setDate] = useState("");
   const [building, setBuilding] = useState("");
   const [floor, setFloor] = useState("");
@@ -28,14 +25,43 @@ export default function ReportPage() {
   const [status, setStatus] = useState("Done");
   const [file, setFile] = useState<File | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  /* -------------------------------------------------
+     🛡️ Guard + שמירת projectId ל־fallback
+  -------------------------------------------------- */
+  useEffect(() => {
+    if (!work.task || !work.project || !work.technician) {
+      router.replace("/");
+      return;
+    }
+
+    // ⬅️ שמירת projectId לניווט עתידי (גם אחרי refresh)
+    sessionStorage.setItem(
+      PROJECT_ID_STORAGE_KEY,
+      work.project.id
+    );
+
+    if (!date) {
+      const today = new Date().toISOString().slice(0, 10);
+      setDate(today);
+    }
+  }, [work, router, date]);
+
+  /* -------------------------------------------------
+     ⛔ אין Context – לא מציג UI
+  -------------------------------------------------- */
+  if (!work.task || !work.project || !work.technician) {
+    return null;
+  }
+
+  const itemId = work.task.id;
+
   function resetForm() {
-    setDate("");
     setBuilding("");
     setFloor("");
     setApartment("");
@@ -91,7 +117,6 @@ export default function ReportPage() {
 
       resetForm();
       setSubmitSuccess(true);
-
     } catch (err) {
       console.error(err);
       setErrorMsg("❌ שגיאת רשת בשליחת הדיווח");
@@ -101,9 +126,13 @@ export default function ReportPage() {
   }
 
   /* -------------------------------------------------
-     🟢 מסך הצלחה
+     🟢 מסך הצלחה (עם ניווט יציב)
   -------------------------------------------------- */
   if (submitSuccess) {
+    const projectId =
+      work.project?.id ||
+      sessionStorage.getItem(PROJECT_ID_STORAGE_KEY);
+
     return (
       <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6">
         <div className="bg-white rounded-lg shadow p-8 w-full max-w-md text-center space-y-6">
@@ -111,76 +140,65 @@ export default function ReportPage() {
             ✔ הדיווח בוצע בהצלחה
           </div>
 
-          <div className="space-y-3">
-            {/* דיווח חדש */}
-            <button
-              onClick={() => setSubmitSuccess(false)}
-              className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700"
-            >
-              בצע דיווח חדש
-            </button>
+          <button
+            onClick={() => setSubmitSuccess(false)}
+            className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold"
+          >
+            בצע דיווח נוסף
+          </button>
 
-            {/* חזרה למסך משימות בפרויקט */}
-            {projectId && technicianId && (
-              <button
-                onClick={() =>
-                  router.push(
-                    `/project/${projectId}?technicianId=${technicianId}`
-                  )
-                }
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700"
-              >
-                עבור למסך משימות
-              </button>
-            )}
-
-            {/* מסך פרויקטים */}
+          {projectId && (
             <button
-              onClick={() => router.push("/")}
-              className="w-full bg-gray-200 text-gray-800 py-3 rounded-lg font-semibold hover:bg-gray-300"
+              onClick={() =>
+                router.push(`/project/${projectId}`)
+              }
+              className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold"
             >
-              עבור למסך פרויקטים
+              חזרה למשימות
             </button>
-          </div>
+          )}
+
+          <button
+            onClick={() => router.push("/")}
+            className="w-full bg-gray-200 text-gray-800 py-3 rounded-lg font-semibold"
+          >
+            מסך פרויקטים
+          </button>
         </div>
       </div>
     );
   }
 
   /* -------------------------------------------------
-     🧾 טופס דיווח רגיל
+     🧾 טופס דיווח
   -------------------------------------------------- */
   return (
     <div className="max-w-xl mx-auto p-6">
-      <h1 className="text-2xl font-bold text-center mb-2">דיווח ביצוע</h1>
+      <h1 className="text-2xl font-bold text-center mb-2">
+        דיווח ביצוע
+      </h1>
 
-      {(projectName || itemName) && (
-        <div className="text-center mb-6 text-gray-700">
-          {projectName && (
-            <div className="text-sm">
-              <strong>פרויקט:</strong> {projectName}
-            </div>
-          )}
-          {itemName && (
-            <div className="text-sm">
-              <strong>משימה:</strong> {itemName}
-            </div>
-          )}
+      <div className="text-center mb-6">
+        <div className="font-semibold">
+          פרויקט: {work.project.name}
         </div>
-      )}
+        <div className="text-sm text-gray-600">
+          משימה: {work.task.name}
+        </div>
+      </div>
 
       {errorMsg && (
-        <div className="mb-4 text-center font-medium text-red-700 bg-red-100 rounded py-2">
+        <div className="mb-4 text-red-700 bg-red-100 rounded py-2 text-center">
           {errorMsg}
         </div>
       )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="form-input" required />
-        <input type="text" placeholder="בניין" value={building} onChange={(e) => setBuilding(e.target.value)} className="form-input" />
-        <input type="text" placeholder="קומה" value={floor} onChange={(e) => setFloor(e.target.value)} className="form-input" />
-        <input type="text" placeholder="דירה" value={apartment} onChange={(e) => setApartment(e.target.value)} className="form-input" />
-        <input type="text" placeholder="תיאור מיקום" value={location} onChange={(e) => setLocation(e.target.value)} className="form-input" />
+        <input placeholder="בניין" value={building} onChange={(e) => setBuilding(e.target.value)} className="form-input" />
+        <input placeholder="קומה" value={floor} onChange={(e) => setFloor(e.target.value)} className="form-input" />
+        <input placeholder="דירה" value={apartment} onChange={(e) => setApartment(e.target.value)} className="form-input" />
+        <input placeholder="תיאור מיקום" value={location} onChange={(e) => setLocation(e.target.value)} className="form-input" />
         <textarea placeholder="הערות" value={notes} onChange={(e) => setNotes(e.target.value)} className="form-input" />
 
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-input">
@@ -193,14 +211,14 @@ export default function ReportPage() {
           type="file"
           accept="image/*"
           capture="environment"
-          onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)}
+          onChange={(e) => setFile(e.target.files?.[0] ?? null)}
           className="form-input"
         />
 
         <button
           type="submit"
           disabled={isSubmitting}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-50"
+          className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold disabled:opacity-50"
         >
           {isSubmitting ? "שולח..." : "שליחת דיווח"}
         </button>

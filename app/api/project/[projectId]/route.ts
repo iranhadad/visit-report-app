@@ -3,10 +3,8 @@ import { NextResponse } from "next/server";
 const MONDAY_API_URL = "https://api.monday.com/v2";
 const MONDAY_TOKEN = process.env.MONDAY_API_TOKEN!;
 
-// לוח "הזמנות בעבודה"
 const TASKS_BOARD_ID = 18392796088;
 
-// IDs של עמודות
 const PROJECT_ID_COLUMN = "numeric_mkyx9yah";
 const REQUIRED_COLUMN = "numeric_mkxqmet4";
 const DONE_COLUMN = "numeric_mkytx33q";
@@ -16,7 +14,7 @@ export async function GET(
   request: Request,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
-  const { projectId } = await params;
+  const { projectId } = await params; // ✅ זה התיקון הקריטי
 
   try {
     const query = `

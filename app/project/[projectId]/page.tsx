@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { useWork } from "@/app/context/WorkContext";
 
 interface TaskItem {
   itemId: string;
@@ -17,9 +17,12 @@ export default function ProjectPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
+  const { setProject, setTechnician, setTask } = useWork();
+
   const projectId = params.projectId as string;
+  const projectName =
+    searchParams.get("projectName") || `פרויקט ${projectId}`;
   const technicianId = searchParams.get("technicianId");
-  const projectName = searchParams.get("projectName"); // ✅ חדש
 
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -27,12 +30,28 @@ export default function ProjectPage() {
   // תאריך היום YYYY-MM-DD
   const today = new Date().toISOString().slice(0, 10);
 
+  /* --------------------------------
+     טעינת משימות הפרויקט
+  --------------------------------- */
   useEffect(() => {
     async function fetchTasks() {
       try {
         const res = await fetch(`/api/project/${projectId}`);
         const data = await res.json();
-        setTasks(data);
+
+        // API מחזיר מערך משימות בלבד
+        setTasks(Array.isArray(data) ? data : []);
+
+        // ✅ הגדרת Context – פרויקט
+        setProject({
+          id: projectId,
+          name: projectName,
+        });
+
+        // ✅ הגדרת Context – טכנאי (אם קיים)
+        if (technicianId) {
+          setTechnician({ id: technicianId });
+        }
       } catch (err) {
         console.error("Failed to load project tasks", err);
       } finally {
@@ -43,33 +62,38 @@ export default function ProjectPage() {
     if (projectId) {
       fetchTasks();
     }
-  }, [projectId]);
+  }, [projectId, projectName, technicianId, setProject, setTechnician]);
 
+  /* --------------------------------
+     כניסה למשימה
+  --------------------------------- */
+  function enterTask(task: TaskItem) {
+    setTask({
+      id: task.itemId,
+      name: task.serviceName,
+    });
+
+    router.push(`/task/${task.itemId}/report`);
+  }
+
+  /* --------------------------------
+     סיום יום עבודה
+  --------------------------------- */
   function goToDailySummary() {
-    if (!technicianId) {
-      alert("חסר technicianId");
-      return;
-    }
-
     if (tasks.length === 0) {
       alert("אין משימות בפרויקט");
       return;
     }
 
-    // entry point טכני בלבד
-    const entryItemId = tasks[0].itemId;
+    const entryTask = tasks[0];
 
-    router.push(
-      `/task/${entryItemId}/summary` +
-        `?projectId=${projectId}` +
-        `&projectName=${encodeURIComponent(projectName ?? "")}` +
-        `&technicianId=${technicianId}` +
-        `&date=${today}`
-    );
+    setTask({
+      id: entryTask.itemId,
+      name: entryTask.serviceName,
+    });
+
+    router.push(`/task/${entryTask.itemId}/summary?date=${today}`);
   }
-
-  const canShowSummaryButton =
-    Boolean(technicianId) && tasks.length > 0;
 
   if (loading) {
     return (
@@ -83,11 +107,11 @@ export default function ProjectPage() {
     <main className="min-h-screen bg-gray-100 p-6 space-y-6">
       {/* כותרת */}
       <h1 className="text-2xl font-bold text-right">
-        {projectName || "שירותים בפרויקט"}
+        {projectName}
       </h1>
 
       {/* סיום יום עבודה */}
-      {canShowSummaryButton && (
+      {tasks.length > 0 && (
         <button
           onClick={goToDailySummary}
           className="w-full bg-green-600 text-white py-4 rounded-lg font-semibold text-lg hover:bg-green-700"
@@ -130,17 +154,12 @@ export default function ProjectPage() {
               </div>
             </div>
 
-            <Link
-              href={
-                `/task/${task.itemId}/report` +
-                `?projectId=${projectId}` +
-                `&projectName=${encodeURIComponent(projectName ?? "")}` +
-                `&technicianId=${technicianId}`
-              }
-              className="block w-full bg-blue-600 text-white text-center py-3 rounded-lg font-medium hover:bg-blue-700 transition"
+            <button
+              onClick={() => enterTask(task)}
+              className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition"
             >
               כניסה למשימה
-            </Link>
+            </button>
           </div>
         ))}
 

@@ -2,6 +2,9 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
+// ✅ הוספת ה־Context
+import { WorkProvider } from "@/app/context/WorkContext";
+
 const geistSans = Geist({
   variable: "--font-geist-sans",
   subsets: ["latin"],
@@ -33,7 +36,10 @@ export default function RootLayout({
           text-right
         `}
       >
-        {children}
+        {/* 🔑 כאן עוטפים את כל האפליקציה */}
+        <WorkProvider>
+          {children}
+        </WorkProvider>
       </body>
     </html>
   );

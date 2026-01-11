@@ -1,7 +1,8 @@
 "use client";
 
-import { useSearchParams, useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useWork } from "@/app/context/WorkContext";
 
 type Report = {
   subitemId: string;
@@ -24,49 +25,46 @@ type ItemSummary = {
 
 type VisitSummaryResponse = {
   success: boolean;
-  projectId: string;
-  technicianId: string;
   date: string;
   items: ItemSummary[];
 };
 
-type Project = {
-  id: string;
-  name: string;
-};
-
 export default function VisitSummaryPage() {
-  const searchParams = useSearchParams();
-  const params = useParams();
   const router = useRouter();
-
-  const itemId = params.itemId as string;
-  const projectId = searchParams.get("projectId");
-  const technicianId = searchParams.get("technicianId");
-  const date = searchParams.get("date");
+  const { work, setDate } = useWork();
 
   const [data, setData] = useState<VisitSummaryResponse | null>(null);
-  const [projectName, setProjectName] = useState("");
   const [loadingSummary, setLoadingSummary] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // 🖼️ תמונה פתוחה ב־Modal
   const [openImage, setOpenImage] = useState<string | null>(null);
 
-  /* -----------------------------
-     שליפת סיכום ביקור
-  ----------------------------- */
+  /* -------------------------------------------------
+     🛡️ Guard – חייבים Context מלא
+  -------------------------------------------------- */
   useEffect(() => {
-    if (!projectId || !technicianId || !date) {
-      setError("חסרים פרטים להצגת סיכום הביקור");
-      setLoadingSummary(false);
+    if (!work.project || !work.technician || !work.task) {
+      router.replace("/");
       return;
     }
+
+    if (!work.date) {
+      const today = new Date().toISOString().slice(0, 10);
+      setDate(today);
+    }
+  }, [work, router, setDate]);
+
+  /* -------------------------------------------------
+     שליפת סיכום ביקור
+  -------------------------------------------------- */
+  useEffect(() => {
+    if (!work.project || !work.technician || !work.date) return;
 
     async function fetchSummary() {
       try {
         const res = await fetch(
-          `/api/visit-summary?projectId=${projectId}&technicianId=${technicianId}&date=${date}`
+          `/api/visit-summary?projectId=${work.project.id}&technicianId=${work.technician.id}&date=${work.date}`
         );
         const json = await res.json();
 
@@ -83,39 +81,37 @@ export default function VisitSummaryPage() {
     }
 
     fetchSummary();
-  }, [projectId, technicianId, date]);
+  }, [work.project, work.technician, work.date]);
 
-  /* -----------------------------
-     שליפת שם פרויקט
-  ----------------------------- */
-  useEffect(() => {
-    if (!projectId) return;
-
-    async function fetchProjectName() {
-      const res = await fetch("/api/projects");
-      const projects: Project[] = await res.json();
-      const project = projects.find(p => String(p.id) === String(projectId));
-      if (project) setProjectName(project.name);
+  /* -------------------------------------------------
+     ✅ ניווט תקין למסך חתימות
+  -------------------------------------------------- */
+  function handleFinishVisit() {
+    if (!work.task) {
+      alert("חסרה משימה פעילה");
+      return;
     }
 
-    fetchProjectName();
-  }, [projectId]);
-
-  function handleFinishVisit() {
-    router.push(
-      `/task/${itemId}/summary/sign?projectId=${projectId}&technicianId=${technicianId}&date=${date}`
-    );
+    router.push(`/task/${work.task.id}/summary/sign`);
   }
 
   if (loadingSummary) {
-    return <div className="max-w-xl mx-auto p-6 text-center">טוען סיכום ביקור...</div>;
+    return (
+      <div className="max-w-xl mx-auto p-6 text-center">
+        טוען סיכום ביקור...
+      </div>
+    );
   }
 
   if (error) {
-    return <div className="max-w-xl mx-auto p-6 text-center text-red-600">{error}</div>;
+    return (
+      <div className="max-w-xl mx-auto p-6 text-center text-red-600">
+        {error}
+      </div>
+    );
   }
 
-  if (!data) return null;
+  if (!data || !work.project || !work.technician) return null;
 
   return (
     <>
@@ -124,49 +120,72 @@ export default function VisitSummaryPage() {
 
         {/* פרטי ביקור */}
         <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-2">
-          <div><strong>פרויקט:</strong> {projectName || `פרויקט #${projectId}`}</div>
-          <div><strong>תאריך:</strong> {data.date}</div>
-          <div><strong>טכנאי:</strong> {data.technicianId}</div>
+          <div>
+            <strong>פרויקט:</strong> {work.project.name}
+          </div>
+          <div>
+            <strong>תאריך:</strong> {data.date}
+          </div>
+          <div>
+            <strong>טכנאי:</strong> {work.technician.id}
+          </div>
         </div>
 
         {/* תוכן */}
         <div className="space-y-6">
-          {data.items.map(item => (
-            <div key={item.itemId} className="border rounded-lg p-4 space-y-4">
-              <h2 className="font-semibold text-lg">{item.itemName}</h2>
+          {data.items.map((item) => (
+            <div
+              key={item.itemId}
+              className="border rounded-lg p-4 space-y-4"
+            >
+              <h2 className="font-semibold text-lg">
+                {item.itemName}
+              </h2>
 
               {item.reports.map((report, index) => (
                 <div
                   key={report.subitemId}
                   className="bg-gray-50 rounded p-3 text-sm flex gap-4 items-stretch"
                 >
-                  {/* טקסט */}
                   <div className="flex-1 space-y-1">
-                    <div className="font-medium">דיווח {index + 1}</div>
+                    <div className="font-medium">
+                      דיווח {index + 1}
+                    </div>
+
                     <div>
-                      <strong>מיקום:</strong> בניין {report.location.building}, קומה{" "}
-                      {report.location.floor}, דירה {report.location.apartment}
+                      <strong>מיקום:</strong> בניין{" "}
+                      {report.location.building}, קומה{" "}
+                      {report.location.floor}, דירה{" "}
+                      {report.location.apartment}
                     </div>
 
                     {report.location.description && (
-                      <div><strong>תיאור מיקום:</strong> {report.location.description}</div>
+                      <div>
+                        <strong>תיאור מיקום:</strong>{" "}
+                        {report.location.description}
+                      </div>
                     )}
 
                     {report.notes && (
-                      <div><strong>הערות:</strong> {report.notes}</div>
+                      <div>
+                        <strong>הערות:</strong> {report.notes}
+                      </div>
                     )}
 
-                    <div><strong>סטטוס:</strong> {report.status}</div>
+                    <div>
+                      <strong>סטטוס:</strong> {report.status}
+                    </div>
                   </div>
 
-                  {/* תמונה */}
                   {report.imageUrl && (
                     <div className="flex">
                       <img
                         src={report.imageUrl}
                         alt="תיעוד מהשטח"
                         className="w-28 h-full object-cover rounded border cursor-pointer hover:opacity-90"
-                        onClick={() => setOpenImage(report.imageUrl!)}
+                        onClick={() =>
+                          setOpenImage(report.imageUrl!)
+                        }
                       />
                     </div>
                   )}

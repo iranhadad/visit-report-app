@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
+import { useWork } from "@/app/context/WorkContext";
 
 interface TaskDetails {
   itemId: string;
@@ -11,15 +11,18 @@ interface TaskDetails {
   done: number;
   remaining: number;
   projectId?: string;
+  projectName?: string;
   technicianId?: string;
 }
 
 export default function TaskPage() {
   const params = useParams();
   const router = useRouter();
+  const { setTask, setProject, setTechnician } = useWork();
+
   const itemId = params.itemId as string;
 
-  const [task, setTask] = useState<TaskDetails | null>(null);
+  const [task, setTaskData] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
 
   // תאריך היום YYYY-MM-DD
@@ -30,7 +33,30 @@ export default function TaskPage() {
       try {
         const res = await fetch(`/api/task/${itemId}`);
         const data = await res.json();
-        setTask(data);
+        setTaskData(data);
+
+        /* -------------------------------------------------
+           🧠 הזנת Context – מקור האמת
+        -------------------------------------------------- */
+        if (data) {
+          setTask({
+            id: data.itemId,
+            name: data.serviceName,
+          });
+
+          if (data.projectId && data.projectName) {
+            setProject({
+              id: data.projectId,
+              name: data.projectName,
+            });
+          }
+
+          if (data.technicianId) {
+            setTechnician({
+              id: data.technicianId,
+            });
+          }
+        }
       } catch (err) {
         console.error("Failed to load task", err);
       } finally {
@@ -41,7 +67,7 @@ export default function TaskPage() {
     if (itemId) {
       fetchTask();
     }
-  }, [itemId]);
+  }, [itemId, setTask, setProject, setTechnician]);
 
   if (loading) {
     return (
@@ -60,13 +86,7 @@ export default function TaskPage() {
   }
 
   function goToSummary() {
-    if (!task) return;
-
-    if (!task.projectId || !task.technicianId) return;
-    
-    router.push(
-      `/task/${task.itemId}/summary?projectId=${task.projectId}&technicianId=${task.technicianId}&date=${today}`
-    );
+    router.push(`/task/${task.itemId}/summary?date=${today}`);
   }
 
   const canGoToSummary =
@@ -75,7 +95,7 @@ export default function TaskPage() {
   return (
     <main className="min-h-screen bg-gray-100 p-6 space-y-6">
       {/* כותרת */}
-      <h1 className="text-2xl font-bold">
+      <h1 className="text-2xl font-bold text-center">
         {task.serviceName}
       </h1>
 
@@ -84,16 +104,12 @@ export default function TaskPage() {
         <div className="grid grid-cols-3 gap-4 text-center">
           <div className="bg-gray-50 rounded p-3">
             <div className="text-sm text-gray-500">נדרש</div>
-            <div className="text-xl font-bold">
-              {task.required}
-            </div>
+            <div className="text-xl font-bold">{task.required}</div>
           </div>
 
           <div className="bg-gray-50 rounded p-3">
             <div className="text-sm text-gray-500">בוצע</div>
-            <div className="text-xl font-bold">
-              {task.done}
-            </div>
+            <div className="text-xl font-bold">{task.done}</div>
           </div>
 
           <div className="bg-gray-50 rounded p-3">
@@ -108,9 +124,10 @@ export default function TaskPage() {
       {/* פעולות */}
       <div className="space-y-4">
         {/* מעבר לדיווח ביצוע */}
-        <Link
-          href={`/task/${task.itemId}/report`}
-          className={`block w-full text-center py-4 rounded-lg text-lg font-semibold transition
+        <button
+          onClick={() => router.push(`/task/${task.itemId}/report`)}
+          disabled={task.remaining <= 0}
+          className={`w-full py-4 rounded-lg text-lg font-semibold transition
             ${
               task.remaining > 0
                 ? "bg-green-600 text-white hover:bg-green-700"
@@ -120,7 +137,7 @@ export default function TaskPage() {
           {task.remaining > 0
             ? "מעבר לדיווח ביצוע"
             : "המשימה הושלמה"}
-        </Link>
+        </button>
 
         {/* סיכום יומי וחתימות */}
         {canGoToSummary && (

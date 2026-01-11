@@ -1,29 +1,40 @@
 "use client";
 
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
+import { useWork } from "@/app/context/WorkContext";
 
 export default function VisitSignaturePage() {
   const params = useParams();
-  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { work, clearWork } = useWork();
 
   const itemId = params.itemId as string;
-  const projectId = searchParams.get("projectId");
-  const technicianId = searchParams.get("technicianId");
-  const date = searchParams.get("date");
+
+  const projectId = work.project?.id;
+  const projectName = work.project?.name;
+  const technicianId = work.technician?.id;
+  const date = work.date;
 
   const [clientName, setClientName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-
-  // 🔹 חדש: משימות שנכללות בדוח
   const [taskItemIds, setTaskItemIds] = useState<string[]>([]);
 
   const clientSigRef = useRef<SignatureCanvas>(null);
   const techSigRef = useRef<SignatureCanvas>(null);
 
   /* -------------------------------------------------
-     0️⃣ שליפת סיכום יומי – המשימות בפועל
+     🛡️ Guard – חייבים Context תקין
+  -------------------------------------------------- */
+  useEffect(() => {
+    if (!projectId || !technicianId || !date || !itemId) {
+      router.replace("/");
+    }
+  }, [projectId, technicianId, date, itemId, router]);
+
+  /* -------------------------------------------------
+     שליפת סיכום יומי – המשימות שבוצעו
   -------------------------------------------------- */
   useEffect(() => {
     if (!projectId || !technicianId || !date) return;
@@ -35,7 +46,6 @@ export default function VisitSignaturePage() {
       .then((data) => {
         const ids =
           data?.items?.map((item: any) => item.itemId) ?? [];
-
         setTaskItemIds(ids);
       })
       .catch((err) => {
@@ -61,7 +71,7 @@ export default function VisitSignaturePage() {
     }
 
     if (!projectId || !technicianId || !date) {
-      alert("חסרים פרטים בסיסיים");
+      alert("חסרים נתוני ביקור");
       return;
     }
 
@@ -73,19 +83,17 @@ export default function VisitSignaturePage() {
     try {
       setSubmitting(true);
 
-      /* -------------------------------------------------
-         1️⃣ יצירת סיכום ביקור (עם IDs נכונים!)
-      -------------------------------------------------- */
+      /* 1️⃣ יצירת סיכום ביקור */
       const createRes = await fetch("/api/visit-summary/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
-          projectName: projectId,       // נטייב בהמשך
+          projectName,
           technicianId,
           technicianName: technicianId,
           date,
-          taskItemIds,                  // ✅ כאן התיקון הקריטי
+          taskItemIds,
         }),
       });
 
@@ -98,9 +106,7 @@ export default function VisitSignaturePage() {
 
       const summaryItemId = createJson.summaryItemId;
 
-      /* -------------------------------------------------
-         2️⃣ העלאת חתימות
-      -------------------------------------------------- */
+      /* 2️⃣ העלאת חתימות */
       const uploadRes = await fetch(
         "/api/visit-summary/upload-signatures",
         {
@@ -124,6 +130,10 @@ export default function VisitSignaturePage() {
 
       alert("✅ סיום ביקור נשמר בהצלחה");
 
+      // 🧹 ניקוי Context וחזרה למסך ראשי
+      clearWork();
+      router.replace("/");
+
     } catch (err) {
       console.error(err);
       alert("שגיאת רשת");
@@ -139,7 +149,7 @@ export default function VisitSignaturePage() {
       </h1>
 
       <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-1">
-        <div><strong>פרויקט:</strong> {projectId}</div>
+        <div><strong>פרויקט:</strong> {projectName}</div>
         <div><strong>תאריך:</strong> {date}</div>
         <div><strong>טכנאי:</strong> {technicianId}</div>
         <div><strong>משימות בדוח:</strong> {taskItemIds.length}</div>
