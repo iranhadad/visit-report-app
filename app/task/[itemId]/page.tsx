@@ -25,40 +25,45 @@ export default function TaskPage() {
   const [task, setTaskData] = useState<TaskDetails | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // תאריך היום YYYY-MM-DD
   const today = new Date().toISOString().slice(0, 10);
 
+  /* -------------------------------------------------
+     📡 שליפת משימה + הזנת Context
+  -------------------------------------------------- */
   useEffect(() => {
     async function fetchTask() {
       try {
         const res = await fetch(`/api/task/${itemId}`);
-        const data = await res.json();
+        const data: TaskDetails | null = await res.json();
+
+        if (!data) {
+          setTaskData(null);
+          return;
+        }
+
         setTaskData(data);
 
-        /* -------------------------------------------------
-           🧠 הזנת Context – מקור האמת
-        -------------------------------------------------- */
-        if (data) {
-          setTask({
-            id: data.itemId,
-            name: data.serviceName,
+        // Context = מקור האמת לניווט
+        setTask({
+          id: data.itemId,
+          name: data.serviceName,
+        });
+
+        if (data.projectId && data.projectName) {
+          setProject({
+            id: data.projectId,
+            name: data.projectName,
           });
+        }
 
-          if (data.projectId && data.projectName) {
-            setProject({
-              id: data.projectId,
-              name: data.projectName,
-            });
-          }
-
-          if (data.technicianId) {
-            setTechnician({
-              id: data.technicianId,
-            });
-          }
+        if (data.technicianId) {
+          setTechnician({
+            id: data.technicianId,
+          });
         }
       } catch (err) {
         console.error("Failed to load task", err);
+        setTaskData(null);
       } finally {
         setLoading(false);
       }
@@ -69,6 +74,9 @@ export default function TaskPage() {
     }
   }, [itemId, setTask, setProject, setTechnician]);
 
+  /* -------------------------------------------------
+     🟡 מצבי ביניים
+  -------------------------------------------------- */
   if (loading) {
     return (
       <main className="p-6 text-center text-gray-500">
@@ -85,21 +93,33 @@ export default function TaskPage() {
     );
   }
 
+  /* -------------------------------------------------
+     ✅ ניווטים בטוחים (TypeScript-safe)
+  -------------------------------------------------- */
   function goToSummary() {
+    if (!task) return;
+
     router.push(`/task/${task.itemId}/summary?date=${today}`);
+  }
+
+  function goToReport() {
+    if (!task) return;
+
+    router.push(`/task/${task.itemId}/report`);
   }
 
   const canGoToSummary =
     Boolean(task.projectId) && Boolean(task.technicianId);
 
+  /* -------------------------------------------------
+     🧾 UI
+  -------------------------------------------------- */
   return (
     <main className="min-h-screen bg-gray-100 p-6 space-y-6">
-      {/* כותרת */}
       <h1 className="text-2xl font-bold text-center">
         {task.serviceName}
       </h1>
 
-      {/* כרטיס נתונים */}
       <div className="bg-white rounded-lg shadow p-6">
         <div className="grid grid-cols-3 gap-4 text-center">
           <div className="bg-gray-50 rounded p-3">
@@ -121,11 +141,9 @@ export default function TaskPage() {
         </div>
       </div>
 
-      {/* פעולות */}
       <div className="space-y-4">
-        {/* מעבר לדיווח ביצוע */}
         <button
-          onClick={() => router.push(`/task/${task.itemId}/report`)}
+          onClick={goToReport}
           disabled={task.remaining <= 0}
           className={`w-full py-4 rounded-lg text-lg font-semibold transition
             ${
@@ -139,7 +157,6 @@ export default function TaskPage() {
             : "המשימה הושלמה"}
         </button>
 
-        {/* סיכום יומי וחתימות */}
         {canGoToSummary && (
           <button
             onClick={goToSummary}
