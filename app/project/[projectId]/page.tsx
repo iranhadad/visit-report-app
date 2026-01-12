@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useWork } from "@/app/context/WorkContext";
 
@@ -17,7 +17,7 @@ export default function ProjectPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
-  const { setProject, setTechnician, setTask } = useWork();
+  const { work, setProject, setTechnician, setTask } = useWork();
 
   const projectId = params.projectId as string;
   const projectName =
@@ -27,31 +27,20 @@ export default function ProjectPage() {
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // תאריך היום YYYY-MM-DD
+  // 🧠 מונע אתחול Context כפול
+  const contextInitialized = useRef(false);
+
   const today = new Date().toISOString().slice(0, 10);
 
   /* --------------------------------
-     טעינת משימות הפרויקט
+     1️⃣ טעינת משימות (FETCH בלבד)
   --------------------------------- */
   useEffect(() => {
     async function fetchTasks() {
       try {
         const res = await fetch(`/api/project/${projectId}`);
         const data = await res.json();
-
-        // API מחזיר מערך משימות בלבד
         setTasks(Array.isArray(data) ? data : []);
-
-        // ✅ הגדרת Context – פרויקט
-        setProject({
-          id: projectId,
-          name: projectName,
-        });
-
-        // ✅ הגדרת Context – טכנאי (אם קיים)
-        if (technicianId) {
-          setTechnician({ id: technicianId });
-        }
       } catch (err) {
         console.error("Failed to load project tasks", err);
       } finally {
@@ -62,6 +51,27 @@ export default function ProjectPage() {
     if (projectId) {
       fetchTasks();
     }
+  }, [projectId]);
+
+  /* --------------------------------
+     2️⃣ אתחול Context – פעם אחת בלבד
+  --------------------------------- */
+  useEffect(() => {
+    if (contextInitialized.current) return;
+    if (!projectId) return;
+
+    console.log("🧠 Initializing WorkContext from ProjectPage");
+
+    setProject({
+      id: projectId,
+      name: projectName,
+    });
+
+    if (technicianId) {
+      setTechnician({ id: technicianId });
+    }
+
+    contextInitialized.current = true;
   }, [projectId, projectName, technicianId, setProject, setTechnician]);
 
   /* --------------------------------
@@ -105,12 +115,10 @@ export default function ProjectPage() {
 
   return (
     <main className="min-h-screen bg-gray-100 p-6 space-y-6">
-      {/* כותרת */}
       <h1 className="text-2xl font-bold text-right">
         {projectName}
       </h1>
 
-      {/* סיום יום עבודה */}
       {tasks.length > 0 && (
         <button
           onClick={goToDailySummary}
@@ -120,7 +128,6 @@ export default function ProjectPage() {
         </button>
       )}
 
-      {/* רשימת משימות */}
       <div className="space-y-6">
         {tasks.map((task) => (
           <div

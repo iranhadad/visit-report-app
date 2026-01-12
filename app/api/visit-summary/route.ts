@@ -7,10 +7,11 @@ const MONDAY_TOKEN = process.env.MONDAY_API_TOKEN!;
 const TASKS_BOARD_ID = 18392796088;
 const SUBITEMS_BOARD_ID = 18392796093;
 
-// Columns
+// Columns – Tasks
 const PROJECT_NUMBER_COLUMN = "numeric_mkyx9yah";
 const TECHNICIAN_COLUMN = "person";
 
+// Columns – Subitems
 const DATE_COLUMN = "date0";
 const BUILDING_COLUMN = "text_mkys4gay";
 const FLOOR_COLUMN = "text_mkysh2sm";
@@ -19,6 +20,9 @@ const LOCATION_DESC_COLUMN = "text_mkys1ted";
 const NOTES_COLUMN = "text_mkysdz8f";
 const STATUS_COLUMN = "status";
 const FILE_COLUMN = "file_mkys7yjr";
+
+// Status values
+const STATUS_DONE = "Done";
 
 async function mondayQuery(query: string) {
   const res = await fetch(MONDAY_API, {
@@ -29,7 +33,15 @@ async function mondayQuery(query: string) {
     },
     body: JSON.stringify({ query }),
   });
-  return res.json();
+
+  const json = await res.json();
+
+  if (json.errors) {
+    console.error("❌ Monday API error:", json.errors);
+    throw new Error("Monday API error");
+  }
+
+  return json;
 }
 
 export async function GET(req: Request) {
@@ -40,14 +52,19 @@ export async function GET(req: Request) {
     const date = searchParams.get("date");
 
     if (!projectId || !technicianId || !date) {
-      return NextResponse.json({ success: false }, { status: 400 });
+      return NextResponse.json(
+        { success: false, error: "Missing params" },
+        { status: 400 }
+      );
     }
 
-    /* 1️⃣ משימות */
+    /* -------------------------------------------------
+       1️⃣ שליפת משימות לפי פרויקט + טכנאי
+    -------------------------------------------------- */
     const itemsRes = await mondayQuery(`
       query {
         boards(ids: [${TASKS_BOARD_ID}]) {
-          items_page(limit: 100) {
+          items_page(limit: 200) {
             items {
               id
               name
@@ -64,18 +81,25 @@ export async function GET(req: Request) {
     const items = itemsRes.data.boards[0].items_page.items;
 
     const filteredItems = items.filter((item: any) => {
-      const projectCol = item.column_values.find((c: any) => c.id === PROJECT_NUMBER_COLUMN);
-      const techCol = item.column_values.find((c: any) => c.id === TECHNICIAN_COLUMN);
+      const projectCol = item.column_values.find(
+        (c: any) => c.id === PROJECT_NUMBER_COLUMN
+      );
+      const techCol = item.column_values.find(
+        (c: any) => c.id === TECHNICIAN_COLUMN
+      );
 
       if (!projectCol?.value || !techCol?.value) return false;
 
-      const projectMatch = projectCol.value.replace(/"/g, "") === projectId;
+      const projectMatch =
+        projectCol.value.replace(/"/g, "") === projectId;
 
       try {
         const people = JSON.parse(techCol.value);
         return (
           projectMatch &&
-          people.personsAndTeams.some((p: any) => String(p.id) === technicianId)
+          people.personsAndTeams?.some(
+            (p: any) => String(p.id) === technicianId
+          )
         );
       } catch {
         return false;
@@ -84,11 +108,23 @@ export async function GET(req: Request) {
 
     const itemIds = filteredItems.map((i: any) => i.id);
 
-    /* 2️⃣ דיווחים */
+    if (itemIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        projectId,
+        technicianId,
+        date,
+        items: [],
+      });
+    }
+
+    /* -------------------------------------------------
+       2️⃣ שליפת Subitems
+    -------------------------------------------------- */
     const subRes = await mondayQuery(`
       query {
         boards(ids: [${SUBITEMS_BOARD_ID}]) {
-          items_page(limit: 200) {
+          items_page(limit: 300) {
             items {
               id
               parent_item { id }
@@ -114,20 +150,40 @@ export async function GET(req: Request) {
 
     const subitems = subRes.data.boards[0].items_page.items;
 
+    /* -------------------------------------------------
+       3️⃣ סינון קריטי – רק Done + תאריך
+    -------------------------------------------------- */
     const relevantSubitems = subitems.filter((sub: any) => {
       if (!itemIds.includes(sub.parent_item?.id)) return false;
-      const dateCol = sub.column_values.find((c: any) => c.id === DATE_COLUMN);
+
+      const dateCol = sub.column_values.find(
+        (c: any) => c.id === DATE_COLUMN
+      );
+      const statusCol = sub.column_values.find(
+        (c: any) => c.id === STATUS_COLUMN
+      );
+
+      if (!dateCol || !statusCol) return false;
+
       try {
-        return JSON.parse(dateCol.value)?.date === date;
+        const sameDate =
+          JSON.parse(dateCol.value)?.date === date;
+        const isDone = statusCol.text === STATUS_DONE;
+
+        return sameDate && isDone;
       } catch {
         return false;
       }
     });
 
-    /* 3️⃣ שליפת תמונות */
+    /* -------------------------------------------------
+       4️⃣ שליפת תמונות
+    -------------------------------------------------- */
     const assetIds = relevantSubitems
       .map((sub: any) => {
-        const fileCol = sub.column_values.find((c: any) => c.id === FILE_COLUMN);
+        const fileCol = sub.column_values.find(
+          (c: any) => c.id === FILE_COLUMN
+        );
         try {
           const parsed = JSON.parse(fileCol?.value || "{}");
           return parsed?.files?.[0]?.assetId;
@@ -139,7 +195,7 @@ export async function GET(req: Request) {
 
     const assetsMap: Record<string, string> = {};
 
-    if (assetIds.length) {
+    if (assetIds.length > 0) {
       const assetsRes = await mondayQuery(`
         query {
           assets(ids: [${assetIds.join(",")}]) {
@@ -154,44 +210,50 @@ export async function GET(req: Request) {
       });
     }
 
-    /* 4️⃣ בניית תשובה */
-    const itemsWithReports = filteredItems.map((item: any) => {
-      const reports = relevantSubitems
-        .filter((sub: any) => sub.parent_item.id === item.id)
-        .map((sub: any) => {
-          const getText = (id: string) =>
-            sub.column_values.find((c: any) => c.id === id)?.text || "";
+    /* -------------------------------------------------
+       5️⃣ בניית התשובה
+    -------------------------------------------------- */
+    const itemsWithReports = filteredItems
+      .map((item: any) => {
+        const reports = relevantSubitems
+          .filter((sub: any) => sub.parent_item.id === item.id)
+          .map((sub: any) => {
+            const getText = (id: string) =>
+              sub.column_values.find((c: any) => c.id === id)?.text || "";
 
-          let imageUrl: string | null = null;
-          const fileCol = sub.column_values.find((c: any) => c.id === FILE_COLUMN);
-          try {
-            const parsed = JSON.parse(fileCol?.value || "{}");
-            const assetId = parsed?.files?.[0]?.assetId;
-            imageUrl = assetId ? assetsMap[assetId] : null;
-          } catch {}
+            let imageUrl: string | null = null;
+            const fileCol = sub.column_values.find(
+              (c: any) => c.id === FILE_COLUMN
+            );
+            try {
+              const parsed = JSON.parse(fileCol?.value || "{}");
+              const assetId = parsed?.files?.[0]?.assetId;
+              imageUrl = assetId ? assetsMap[assetId] : null;
+            } catch {}
 
-          return {
-            subitemId: sub.id,
-            location: {
-              building: getText(BUILDING_COLUMN),
-              floor: getText(FLOOR_COLUMN),
-              apartment: getText(APARTMENT_COLUMN),
-              description: getText(LOCATION_DESC_COLUMN),
-            },
-            notes: getText(NOTES_COLUMN),
-            status: getText(STATUS_COLUMN),
-            imageUrl,
-          };
-        });
+            return {
+              subitemId: sub.id,
+              location: {
+                building: getText(BUILDING_COLUMN),
+                floor: getText(FLOOR_COLUMN),
+                apartment: getText(APARTMENT_COLUMN),
+                description: getText(LOCATION_DESC_COLUMN),
+              },
+              notes: getText(NOTES_COLUMN),
+              status: getText(STATUS_COLUMN),
+              imageUrl,
+            };
+          });
 
-      if (!reports.length) return null;
+        if (!reports.length) return null;
 
-      return {
-        itemId: item.id,
-        itemName: item.name,
-        reports,
-      };
-    }).filter(Boolean);
+        return {
+          itemId: item.id,
+          itemName: item.name,
+          reports,
+        };
+      })
+      .filter(Boolean);
 
     return NextResponse.json({
       success: true,
@@ -202,7 +264,10 @@ export async function GET(req: Request) {
     });
 
   } catch (err) {
-    console.error(err);
-    return NextResponse.json({ success: false }, { status: 500 });
+    console.error("❌ visit-summary error:", err);
+    return NextResponse.json(
+      { success: false, error: "Server error" },
+      { status: 500 }
+    );
   }
 }

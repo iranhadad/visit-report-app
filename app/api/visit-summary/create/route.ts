@@ -4,40 +4,78 @@ const MONDAY_API = "https://api.monday.com/v2";
 const MONDAY_TOKEN = process.env.MONDAY_API_TOKEN!;
 
 // Boards
-const SUMMARY_BOARD_ID = 18394724561; // סיכומי ביקור
-const TASKS_BOARD_ID = 18392796088;   // הזמנות בעבודה (משימות)
+const SUMMARY_BOARD_ID = 18394724561;   // סיכומי ביקור
+const SUBITEMS_BOARD_ID = 18392796093;  // Subitems
 
-// Columns – לוח סיכומי ביקור
+// Columns – סיכום ביקור
 const TECHNICIAN_COLUMN = "person";
 const STATUS_COLUMN = "status";
 const DATE_COLUMN = "date4";
 const PROJECT_NAME_COLUMN = "text_mkze5fwc";
 const PROJECT_ID_COLUMN = "numeric_mkzeabjg";
-const TASKS_RELATION_COLUMN = "board_relation_mkzefp1y";
+const CLIENT_NAME_COLUMN = "text_mkzf3p9x";
+const CLIENT_ROLE_COLUMN = "text_mkzf6812";
 
-// Columns – לוח משימות (אופציונלי – קישור חזרה)
-const TASK_TO_SUMMARY_RELATION_COLUMN = "board_relation_mkzet4sm";
+// Columns – Subitems
+const SUMMARY_ID_COLUMN = "numeric_mkzh3g1k";
+const SUBITEM_STATUS_COLUMN = "status";
 
+const STATUS_DONE = "Done";
+const STATUS_SIGNED = "חתום ומאושר";
+
+/* -------------------------------------------------
+   Helper – Monday request
+-------------------------------------------------- */
+async function mondayRequest(query: string) {
+  const res = await fetch(MONDAY_API, {
+    method: "POST",
+    headers: {
+      Authorization: MONDAY_TOKEN,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  const json = await res.json();
+
+  if (json.errors) {
+    console.error("❌ Monday API error:", json.errors);
+    throw new Error("Monday API error");
+  }
+
+  return json;
+}
+
+/* -------------------------------------------------
+   POST
+-------------------------------------------------- */
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-
     const {
       projectId,
       projectName,
       technicianId,
       technicianName,
       date,
-      taskItemIds,
-    } = body;
+      clientName,
+      clientRole,
+      subitemIds,
+    } = await req.json();
+
+    console.log("=== PAYLOAD ===", {
+      projectId,
+      date,
+      technicianId,
+      subitemIds,
+    });
 
     if (
       !projectId ||
       !projectName ||
       !technicianId ||
-      !technicianName ||
       !date ||
-      !Array.isArray(taskItemIds)
+      !Array.isArray(subitemIds) ||
+      subitemIds.length === 0
     ) {
       return NextResponse.json(
         { success: false, error: "Missing required fields" },
@@ -46,28 +84,45 @@ export async function POST(req: Request) {
     }
 
     /* -------------------------------------------------
-       0️⃣ ניקוי וולידציה ל־IDs של משימות (קריטי!)
+       1️⃣ שליפת סטטוס אמיתי של Subitems
     -------------------------------------------------- */
-    const cleanedTaskItemIds = Array.from(
-      new Set(
-        taskItemIds
-          .map((id: any) => Number(id))
-          .filter((id: number) => Number.isInteger(id) && id > 0)
-      )
+    const ids = subitemIds.map(Number).join(",");
+
+    const fetchSubitemsQuery = `
+      query {
+        items(ids: [${ids}]) {
+          id
+          column_values(ids: ["${SUBITEM_STATUS_COLUMN}"]) {
+            id
+            text
+          }
+        }
+      }
+    `;
+
+    const subitemsRes = await mondayRequest(fetchSubitemsQuery);
+
+    const eligibleSubitems = subitemsRes.data.items.filter(
+      (item: any) =>
+        item.column_values[0]?.text === STATUS_DONE
     );
 
-    if (cleanedTaskItemIds.length === 0) {
-      return NextResponse.json(
-        { success: false, error: "No valid task item IDs" },
-        { status: 400 }
-      );
+    console.log(
+      "✅ Eligible subitems (Done בלבד):",
+      eligibleSubitems.map((i: any) => i.id)
+    );
+
+    if (eligibleSubitems.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: "אין דיווחים חדשים לסיכום ביקור",
+      });
     }
 
     /* -------------------------------------------------
-       1️⃣ יצירת Item בלוח סיכומי ביקור
+       2️⃣ יצירת סיכום ביקור
     -------------------------------------------------- */
-
-    const itemName = `${date} | ${projectName} | ${technicianName}`;
+    const itemName = `${date} | ${projectName} | ${technicianName || technicianId}`;
 
     const columnValues = {
       [TECHNICIAN_COLUMN]: {
@@ -75,85 +130,63 @@ export async function POST(req: Request) {
       },
       [DATE_COLUMN]: { date },
       [PROJECT_NAME_COLUMN]: projectName,
-      [PROJECT_ID_COLUMN]: projectId,
-      [STATUS_COLUMN]: { label: "Done" },
-      [TASKS_RELATION_COLUMN]: {
-        item_ids: cleanedTaskItemIds,
-      },
+      [PROJECT_ID_COLUMN]: Number(projectId),
+      [STATUS_COLUMN]: { label: STATUS_DONE },
+      [CLIENT_NAME_COLUMN]: clientName || "",
+      [CLIENT_ROLE_COLUMN]: clientRole || "",
     };
 
-    const createMutation = `
+    console.log("=== SUMMARY COLUMN VALUES ===", columnValues);
+
+    const createItemQuery = `
       mutation {
         create_item(
           board_id: ${SUMMARY_BOARD_ID},
           item_name: "${itemName.replace(/"/g, '\\"')}",
-          column_values: "${JSON.stringify(columnValues).replace(/"/g, '\\"')}"
+          column_values: ${JSON.stringify(JSON.stringify(columnValues))}
         ) {
           id
         }
       }
     `;
 
-    const createRes = await fetch(MONDAY_API, {
-      method: "POST",
-      headers: {
-        Authorization: MONDAY_TOKEN,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query: createMutation }),
-    });
+    const createRes = await mondayRequest(createItemQuery);
+    const summaryItemId = Number(createRes.data.create_item.id);
 
-    const createJson = await createRes.json();
-    const summaryItemId = createJson?.data?.create_item?.id;
-
-    if (!summaryItemId) {
-      console.error("Create summary error:", createJson);
-      return NextResponse.json(
-        { success: false, error: "Failed to create summary item" },
-        { status: 500 }
-      );
-    }
+    console.log("✅ Summary created:", summaryItemId);
 
     /* -------------------------------------------------
-       2️⃣ (אופציונלי) קישור חזרה מכל משימה → לסיכום
-       אפשר להשאיר / להסיר – לא חובה לתפקוד
+       3️⃣ עדכון רק Subitems שעברו סינון
     -------------------------------------------------- */
+    for (const item of eligibleSubitems) {
+      const updateValues = {
+        [SUMMARY_ID_COLUMN]: summaryItemId,
+        [SUBITEM_STATUS_COLUMN]: { label: STATUS_SIGNED },
+      };
 
-    for (const taskId of cleanedTaskItemIds) {
-      const linkMutation = `
+      const updateQuery = `
         mutation {
-          change_column_value(
-            board_id: ${TASKS_BOARD_ID},
-            item_id: ${taskId},
-            column_id: "${TASK_TO_SUMMARY_RELATION_COLUMN}",
-            value: "{\\"item_ids\\":[${summaryItemId}]}"
+          change_multiple_column_values(
+            board_id: ${SUBITEMS_BOARD_ID},
+            item_id: ${item.id},
+            column_values: ${JSON.stringify(JSON.stringify(updateValues))}
           ) {
             id
           }
         }
       `;
 
-      await fetch(MONDAY_API, {
-        method: "POST",
-        headers: {
-          Authorization: MONDAY_TOKEN,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ query: linkMutation }),
-      });
+      await mondayRequest(updateQuery);
     }
-
-    /* -------------------------------------------------
-       3️⃣ תשובה סופית
-    -------------------------------------------------- */
 
     return NextResponse.json({
       success: true,
       summaryItemId,
+      updatedSubitems: eligibleSubitems.map((i: any) => i.id),
     });
 
-  } catch (error) {
-    console.error("visit-summary/create API error:", error);
+  } catch (err) {
+    console.error("❌ visit-summary/create error:", err);
     return NextResponse.json(
       { success: false, error: "Server error" },
       { status: 500 }

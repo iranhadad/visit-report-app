@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams, useParams } from "next/navigation";
 import { useWork } from "@/app/context/WorkContext";
 
 type Report = {
@@ -31,45 +31,51 @@ type VisitSummaryResponse = {
 
 export default function VisitSummaryPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const params = useParams();
   const { work } = useWork();
+
+  const itemId = params.itemId as string;
+
+  // 🔑 URL = מקור אמת
+  const projectId =
+    work.project?.id || searchParams.get("projectId");
+  const technicianId =
+    work.technician?.id || searchParams.get("technicianId");
+  const date =
+    work.date || searchParams.get("date");
 
   const [data, setData] = useState<VisitSummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [openImage, setOpenImage] = useState<string | null>(null);
 
-  /* -------------------------------------------------
-     🛡️ Guard – בלי Context אין מה לחפש פה
-  -------------------------------------------------- */
+  /* 🛡️ Guard מינימלי */
   useEffect(() => {
-    if (!work.project || !work.technician || !work.date) {
+    if (!itemId || !projectId || !technicianId || !date) {
+      console.log("⛔ redirect from summary", {
+        itemId,
+        projectId,
+        technicianId,
+        date,
+      });
       router.replace("/");
     }
-  }, [work, router]);
+  }, [itemId, projectId, technicianId, date, router]);
 
-  /* -------------------------------------------------
-     ⛔ עצירה מוחלטת ל־TypeScript
-  -------------------------------------------------- */
-  if (!work.project || !work.technician || !work.date) {
-    return null;
-  }
-
-  const { project, technician, date } = work;
-
-  /* -------------------------------------------------
-     📡 Fetch סיכום ביקור
-  -------------------------------------------------- */
+  /* 📡 Fetch סיכום ביקור */
   useEffect(() => {
+    if (!projectId || !technicianId || !date) return;
+
     async function fetchSummary() {
       try {
         const res = await fetch(
-          `/api/visit-summary?projectId=${project.id}&technicianId=${technician.id}&date=${date}`
+          `/api/visit-summary?projectId=${projectId}&technicianId=${technicianId}&date=${date}`
         );
-
         const json = await res.json();
 
         if (!json.success) {
-          setError("שגיאה בשליפת סיכום הביקור");
+          setError("שגיאה בשליפת סיכום ביקור");
         } else {
           setData(json);
         }
@@ -81,25 +87,34 @@ export default function VisitSummaryPage() {
     }
 
     fetchSummary();
-  }, [project.id, technician.id, date]);
+  }, [projectId, technicianId, date]);
 
   function goToSign() {
-    router.push(`/task/${work.task?.id}/summary/sign`);
+    if (!data) return;
+
+    const subitemIds = data.items.flatMap((i) =>
+      i.reports.map((r) => r.subitemId)
+    );
+
+    if (!subitemIds.length) {
+      alert("אין דיווחים לחתימה");
+      return;
+    }
+
+    router.push(
+      `/task/${itemId}/summary/sign?` +
+        `projectId=${projectId}&technicianId=${technicianId}&date=${date}` +
+        `&subitems=${subitemIds.join(",")}`
+    );
   }
 
   if (loading) {
-    return (
-      <div className="max-w-xl mx-auto p-6 text-center">
-        טוען סיכום ביקור…
-      </div>
-    );
+    return <div className="p-6 text-center">טוען סיכום ביקור…</div>;
   }
 
   if (error) {
     return (
-      <div className="max-w-xl mx-auto p-6 text-center text-red-600">
-        {error}
-      </div>
+      <div className="p-6 text-center text-red-600">{error}</div>
     );
   }
 
@@ -108,62 +123,65 @@ export default function VisitSummaryPage() {
   return (
     <>
       <div className="max-w-xl mx-auto p-6 space-y-6 text-right">
-        <h1 className="text-2xl font-bold text-center">סיכום ביקור</h1>
+        <h1 className="text-2xl font-bold text-center">
+          סיכום ביקור
+        </h1>
 
-        <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-2">
-          <div><strong>פרויקט:</strong> {project.name}</div>
-          <div><strong>תאריך:</strong> {data.date}</div>
-          <div><strong>טכנאי:</strong> {technician.id}</div>
-        </div>
+        {data.items.map((item) => (
+          <div
+            key={item.itemId}
+            className="border rounded-lg p-4 space-y-4"
+          >
+            <h2 className="font-semibold text-lg">
+              {item.itemName}
+            </h2>
 
-        <div className="space-y-6">
-          {data.items.map((item) => (
-            <div key={item.itemId} className="border rounded-lg p-4 space-y-4">
-              <h2 className="font-semibold text-lg">{item.itemName}</h2>
-
-              {item.reports.map((report, index) => (
-                <div
-                  key={report.subitemId}
-                  className="bg-gray-50 rounded p-3 text-sm flex gap-4"
-                >
-                  <div className="flex-1 space-y-1">
-                    <div className="font-medium">דיווח {index + 1}</div>
-
-                    <div>
-                      <strong>מיקום:</strong> בניין {report.location.building},
-                      קומה {report.location.floor},
-                      דירה {report.location.apartment}
-                    </div>
-
-                    {report.location.description && (
-                      <div>
-                        <strong>תיאור:</strong> {report.location.description}
-                      </div>
-                    )}
-
-                    {report.notes && (
-                      <div>
-                        <strong>הערות:</strong> {report.notes}
-                      </div>
-                    )}
-
-                    <div>
-                      <strong>סטטוס:</strong> {report.status}
-                    </div>
+            {item.reports.map((r, i) => (
+              <div
+                key={r.subitemId}
+                className="bg-gray-50 rounded p-3 text-sm flex gap-4"
+              >
+                <div className="flex-1 space-y-1">
+                  <div className="font-medium">
+                    דיווח {i + 1}
                   </div>
 
-                  {report.imageUrl && (
-                    <img
-                      src={report.imageUrl}
-                      className="w-28 rounded border cursor-pointer"
-                      onClick={() => setOpenImage(report.imageUrl!)}
-                    />
+                  <div>
+                    <strong>מיקום:</strong>{" "}
+                    בניין {r.location.building}, קומה{" "}
+                    {r.location.floor}, דירה{" "}
+                    {r.location.apartment}
+                  </div>
+
+                  {r.location.description && (
+                    <div>
+                      <strong>תיאור:</strong>{" "}
+                      {r.location.description}
+                    </div>
                   )}
+
+                  {r.notes && (
+                    <div>
+                      <strong>הערות:</strong> {r.notes}
+                    </div>
+                  )}
+
+                  <div>
+                    <strong>סטטוס:</strong> {r.status}
+                  </div>
                 </div>
-              ))}
-            </div>
-          ))}
-        </div>
+
+                {r.imageUrl && (
+                  <img
+                    src={r.imageUrl}
+                    className="w-28 rounded border cursor-pointer"
+                    onClick={() => setOpenImage(r.imageUrl!)}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        ))}
 
         <button
           onClick={goToSign}
@@ -173,12 +191,16 @@ export default function VisitSummaryPage() {
         </button>
       </div>
 
+      {/* תצוגת תמונה מלאה */}
       {openImage && (
         <div
           className="fixed inset-0 bg-black/80 flex items-center justify-center"
           onClick={() => setOpenImage(null)}
         >
-          <img src={openImage} className="max-h-full max-w-full rounded" />
+          <img
+            src={openImage}
+            className="max-h-full max-w-full rounded"
+          />
         </div>
       )}
     </>

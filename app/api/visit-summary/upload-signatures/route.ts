@@ -28,16 +28,21 @@ export async function POST(req: Request) {
       summaryItemId,
       clientSignature,
       technicianSignature,
+      clientName,
     } = await req.json();
 
-    if (!summaryItemId || !clientSignature || !technicianSignature) {
+    if (
+      !summaryItemId ||
+      !clientSignature ||
+      !technicianSignature ||
+      isNaN(Number(summaryItemId))
+    ) {
       return NextResponse.json(
-        { success: false, error: "Missing required fields" },
+        { success: false, error: "Missing or invalid fields" },
         { status: 400 }
       );
     }
 
-    // ---------- upload helper ----------
     async function uploadFile(
       columnId: string,
       base64: string,
@@ -48,7 +53,7 @@ export async function POST(req: Request) {
       const mutation = `
         mutation ($file: File!) {
           add_file_to_column (
-            item_id: ${summaryItemId},
+            item_id: ${Number(summaryItemId)},
             column_id: "${columnId}",
             file: $file
           ) {
@@ -57,10 +62,7 @@ export async function POST(req: Request) {
         }
       `;
 
-      formData.append(
-        "query",
-        mutation
-      );
+      formData.append("query", mutation);
       formData.append(
         "variables[file]",
         base64ToBlob(base64),
@@ -82,11 +84,10 @@ export async function POST(req: Request) {
       }
     }
 
-    // ---------- uploads ----------
     await uploadFile(
       CLIENT_SIGNATURE_COLUMN,
       clientSignature,
-      "client-signature.png"
+      `client-signature${clientName ? "-" + clientName : ""}.png`
     );
 
     await uploadFile(

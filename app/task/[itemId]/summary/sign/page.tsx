@@ -1,57 +1,52 @@
 "use client";
 
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import SignatureCanvas from "react-signature-canvas";
 import { useWork } from "@/app/context/WorkContext";
 
 export default function VisitSignaturePage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const router = useRouter();
-  const { work, clearWork } = useWork();
+  const { clearWork } = useWork();
 
   const itemId = params.itemId as string;
 
-  const projectId = work.project?.id;
-  const projectName = work.project?.name;
-  const technicianId = work.technician?.id;
-  const date = work.date;
+  // 🔑 URL = מקור אמת
+  const projectId = searchParams.get("projectId");
+  const technicianId = searchParams.get("technicianId");
+  const date = searchParams.get("date");
+
+  const subitemIds =
+    searchParams.get("subitems")?.split(",").filter(Boolean) ?? [];
 
   const [clientName, setClientName] = useState("");
+  const [clientRole, setClientRole] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [taskItemIds, setTaskItemIds] = useState<string[]>([]);
 
   const clientSigRef = useRef<SignatureCanvas>(null);
   const techSigRef = useRef<SignatureCanvas>(null);
 
-  /* -------------------------------------------------
-     🛡️ Guard – חייבים Context תקין
-  -------------------------------------------------- */
+  /* 🛡️ Guard – URL בלבד */
   useEffect(() => {
-    if (!projectId || !technicianId || !date || !itemId) {
+    if (
+      !itemId ||
+      !projectId ||
+      !technicianId ||
+      !date ||
+      subitemIds.length === 0
+    ) {
+      console.log("⛔ redirect from signature", {
+        itemId,
+        projectId,
+        technicianId,
+        date,
+        subitemIds,
+      });
       router.replace("/");
     }
-  }, [projectId, technicianId, date, itemId, router]);
-
-  /* -------------------------------------------------
-     שליפת סיכום יומי – המשימות שבוצעו
-  -------------------------------------------------- */
-  useEffect(() => {
-    if (!projectId || !technicianId || !date) return;
-
-    fetch(
-      `/api/visit-summary?projectId=${projectId}&technicianId=${technicianId}&date=${date}`
-    )
-      .then((res) => res.json())
-      .then((data) => {
-        const ids =
-          data?.items?.map((item: any) => item.itemId) ?? [];
-        setTaskItemIds(ids);
-      })
-      .catch((err) => {
-        console.error("Failed to load visit summary", err);
-      });
-  }, [projectId, technicianId, date]);
+  }, [itemId, projectId, technicianId, date, subitemIds, router]);
 
   function clearClientSignature() {
     clientSigRef.current?.clear();
@@ -70,30 +65,29 @@ export default function VisitSignaturePage() {
       return;
     }
 
-    if (!projectId || !technicianId || !date) {
-      alert("חסרים נתוני ביקור");
-      return;
-    }
-
-    if (taskItemIds.length === 0) {
-      alert("לא נמצאו משימות לדוח זה");
+    if (!clientName.trim()) {
+      alert("יש להזין שם נציג הלקוח");
       return;
     }
 
     try {
       setSubmitting(true);
 
-      /* 1️⃣ יצירת סיכום ביקור */
+      /* 1️⃣ יצירת סיכום ביקור + עדכון subitems */
       const createRes = await fetch("/api/visit-summary/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId,
-          projectName,
+          projectName: projectId, // זמני
           technicianId,
           technicianName: technicianId,
           date,
-          taskItemIds,
+          subitemIds,
+
+          // ✅ התיקון הקריטי
+          clientName,
+          clientRole,
         }),
       });
 
@@ -116,7 +110,6 @@ export default function VisitSignaturePage() {
             summaryItemId,
             clientSignature,
             technicianSignature,
-            clientName,
           }),
         }
       );
@@ -130,7 +123,6 @@ export default function VisitSignaturePage() {
 
       alert("✅ סיום ביקור נשמר בהצלחה");
 
-      // 🧹 ניקוי Context וחזרה למסך ראשי
       clearWork();
       router.replace("/");
 
@@ -149,12 +141,12 @@ export default function VisitSignaturePage() {
       </h1>
 
       <div className="bg-gray-50 rounded-lg p-4 text-sm space-y-1">
-        <div><strong>פרויקט:</strong> {projectName}</div>
         <div><strong>תאריך:</strong> {date}</div>
         <div><strong>טכנאי:</strong> {technicianId}</div>
-        <div><strong>משימות בדוח:</strong> {taskItemIds.length}</div>
+        <div><strong>דיווחים בביקור:</strong> {subitemIds.length}</div>
       </div>
 
+      {/* שם נציג */}
       <div>
         <label className="block mb-1 font-medium">
           שם נציג הלקוח
@@ -168,6 +160,21 @@ export default function VisitSignaturePage() {
         />
       </div>
 
+      {/* תפקיד נציג */}
+      <div>
+        <label className="block mb-1 font-medium">
+          תפקיד נציג הלקוח
+        </label>
+        <input
+          type="text"
+          value={clientRole}
+          onChange={(e) => setClientRole(e.target.value)}
+          className="form-input w-full"
+          placeholder="לדוגמה: מנהל אחזקה / דייר / מפקח"
+        />
+      </div>
+
+      {/* חתימת לקוח */}
       <div className="space-y-2">
         <div className="font-medium">חתימת נציג הלקוח</div>
         <div className="border rounded">
@@ -186,6 +193,7 @@ export default function VisitSignaturePage() {
         </button>
       </div>
 
+      {/* חתימת טכנאי */}
       <div className="space-y-2">
         <div className="font-medium">חתימת טכנאי</div>
         <div className="border rounded">
